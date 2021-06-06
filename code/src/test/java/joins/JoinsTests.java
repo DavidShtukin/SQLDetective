@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import parser.ColumnsLineage;
+import parser.JoinType;
 import parser.JoinsLineage;
 import parser.LineageAnalysis;
 import parser.NodeContext;
@@ -22,7 +23,7 @@ public class JoinsTests {
 
     @BeforeEach
     public void setup() {
-        detective = new SqlDetective();
+         detective = new SqlDetective();
     }
 
 
@@ -61,7 +62,7 @@ public class JoinsTests {
     @Test
     public void unqualifiedColumnsInUsingJoin() throws SqlParseException {
 
-        List<String> input = ImmutableList.of("Select x, y FROM emp JOIN dept USING (depId, branchId)");
+       List<String> input = ImmutableList.of("Select x, y FROM emp JOIN dept USING (depId, branchId)");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(3, resLineage.columnsLineage.entrySet().size());
@@ -83,7 +84,7 @@ public class JoinsTests {
     public void qualifiedColumnsInOnJoin() throws SqlParseException {
 
         List<String> input = ImmutableList.of("SELECT tab1.x1, tab1.y1, tab2.z2, tab2.w2 FROM tab1 join tab2 ON tab1.x1 = tab2.x2 " +
-                "AND tab1.y1 = tab2.z2");
+                                                      "AND tab1.y1 = tab2.z2");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(2, resLineage.columnsLineage.entrySet().size());
@@ -111,16 +112,17 @@ public class JoinsTests {
     @Test
     public void sameTablesJoinsWithDifferentKeys() throws SqlParseException {
 
-        List<String> input = ImmutableList.of("SELECT tab1.y1, tab2.y2 FROM tab1 join tab2 on tab1.x1 = tab2.x2",
-                "SELECT tab1.x1, tab1.y1, tab2.z2, tab2.w2 FROM tab1 join tab2 on tab1.y1 = tab2.y2",
-                "SELECT t1.x1, t2.z2 FROM tab1 t1 join tab2 t2 on t1.x1 = t2.x2",
-                "SELECT t1.x1, t2.z2 FROM tab1 t1 join tab2 t2 using(x1)",
-                "SELECT t1.x1, t2.z2 FROM tab1 t1, tab2 t2");
+        List<String> input = ImmutableList.of("SELECT tab1.y1, tab2.y2 FROM tab1 join tab2 on tab1.x1 <> tab2.x2",
+                                              "SELECT tab1.x1, tab1.y1, tab2.z2, tab2.w2 FROM tab1 join tab2 on tab1.y1 = tab2.y2",
+                                              "SELECT t1.x1, t2.z2 FROM tab1 t1 join tab2 t2 on t1.x1 = t2.x2",
+                                              "SELECT t1.x1, t2.z2 FROM tab1 t1 join tab2 t2 using(x1)",
+                                              "SELECT t1.x1, t2.z2 FROM tab1 t1, tab2 t2");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(1, resLineage.joinsLineage .entrySet().size());
-        Assertions.assertEquals(3, resLineage.joinsLineage.get("(TAB1; TAB2)").joinCount);
-        Assertions.assertEquals(2, resLineage.joinsLineage.get("(TAB1; TAB2)").joinKeys.get("[TAB1.X1, TAB2.X2]"));
+        Assertions.assertEquals(4, resLineage.joinsLineage.get("(TAB1 -> TAB2)").joinCount);
+        Assertions.assertEquals(1, resLineage.joinsLineage.get("(TAB1 -> TAB2)").joinKeys.get("[TAB1.X1, TAB2.X2]").counts.get(JoinType.EQUALITY));
+        Assertions.assertEquals(1, resLineage.joinsLineage.get("(TAB1 -> TAB2)").joinKeys.get("[TAB1.X1, TAB2.X2]").counts.get(JoinType.THETA));
         detective.printLineage();
     }
 
@@ -128,10 +130,9 @@ public class JoinsTests {
     public void selfTableJoin() throws SqlParseException {
 
         List<String> input = ImmutableList.of("SELECT employee.Id, employee.FullName, employee.ManagerId, manager.FullName " +
-                "FROM Employees employee " +
-                "JOIN Employees manager ON employee.ManagerId = manager.Id");
+                                                      "FROM Employees employee " +
+                                                      "JOIN Employees manager ON employee.ManagerId = manager.Id");
         LineageAnalysis resLineage = detective.parseInput(input);
-
 
         Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
         Assertions.assertEquals(3, resLineage.columnsLineage.get("EMPLOYEES").tableColumns.size());
@@ -143,8 +144,8 @@ public class JoinsTests {
         Assertions.assertEquals(2, resLineage.columnsLineage.get("EMPLOYEES").tableColumns.get("FULLNAME").counts.get(NodeContext.SELECT));
 
         Assertions.assertEquals(1, resLineage.joinsLineage .entrySet().size());
-        Assertions.assertEquals(1, resLineage.joinsLineage.get("(EMPLOYEES; EMPLOYEES)").joinCount);
-        Assertions.assertEquals(1, resLineage.joinsLineage.get("(EMPLOYEES; EMPLOYEES)").joinKeys.get("[EMPLOYEES.ID, EMPLOYEES.MANAGERID]"));
+        Assertions.assertEquals(1, resLineage.joinsLineage.get("(EMPLOYEES -> EMPLOYEES)").joinCount);
+        Assertions.assertEquals(1, resLineage.joinsLineage.get("(EMPLOYEES -> EMPLOYEES)").joinKeys.get("[EMPLOYEES.ID, EMPLOYEES.MANAGERID]").counts.get(JoinType.EQUALITY));
         detective.printLineage();
     }
 }

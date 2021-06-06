@@ -699,4 +699,3 @@ revenue
 )
 order by
 s_suppkey;
-

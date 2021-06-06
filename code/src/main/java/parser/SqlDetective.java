@@ -55,7 +55,11 @@ public class SqlDetective {
     }
 
     private void sortLineage() {
+        sortColumnsLineage();
+        sortJoinsLineage();
+    }
 
+    private void sortColumnsLineage() {
         // 1. Tables by usage
         List<Map.Entry<String, ColumnsLineage>> tableEntries =
                 new ArrayList<>(globalLineage.columnsLineage.entrySet());
@@ -72,12 +76,37 @@ public class SqlDetective {
             // 2. Columns within tables by sum of usage counts
             Map<String, ColumnMetrics> sortedColumnsMap = sortColumns(entry.getValue().tableColumns);
             sortedTablesMap.put(entry.getKey(), new ColumnsLineage(entry.getValue().tableCount,
-                    sortedColumnsMap));
+                                                                   sortedColumnsMap));
         }
 
         // 3. Replace in globalLineage
         globalLineage.columnsLineage.clear();
         globalLineage.columnsLineage.putAll(sortedTablesMap);
+    }
+
+    private void sortJoinsLineage() {
+        // 1. Joins by usage
+        List<Map.Entry<String, JoinsLineage>> joinEntries =
+                new ArrayList<>(globalLineage.joinsLineage.entrySet());
+        Collections.sort(joinEntries, new Comparator<Map.Entry<String, JoinsLineage>>() {
+            @Override
+            public int compare(Map.Entry<String, JoinsLineage> j1, Map.Entry<String, JoinsLineage> j2) {
+                return j2.getValue().joinCount.compareTo(j1.getValue().joinCount);
+            }
+        });
+
+        Map<String, JoinsLineage> sortedJoinsMap = new LinkedHashMap<>();
+        for (Map.Entry<String, JoinsLineage> entry : joinEntries) {
+
+            // 2. Key combinations within joins by sum of usage counts
+            Map<String, JoinMetrics> sortedKeysMap = sortKeyCombinations(entry.getValue().joinKeys);
+            sortedJoinsMap.put(entry.getKey(), new JoinsLineage(entry.getValue().joinCount,
+                                                                sortedKeysMap));
+        }
+
+        // 3. Replace in globalLineage
+        globalLineage.joinsLineage.clear();
+        globalLineage.joinsLineage.putAll(sortedJoinsMap);
     }
 
     private Map<String, ColumnMetrics> sortColumns(final Map<String, ColumnMetrics> columns) {
@@ -87,7 +116,7 @@ public class SqlDetective {
             @Override
             public int compare(Map.Entry<String, ColumnMetrics> c1, Map.Entry<String, ColumnMetrics> c2) {
                 return c2.getValue().counts.values().stream().reduce(0, Integer::sum) -
-                        c1.getValue().counts.values().stream().reduce(0, Integer::sum);
+                       c1.getValue().counts.values().stream().reduce(0, Integer::sum);
             }
         });
 
@@ -96,6 +125,24 @@ public class SqlDetective {
             sortedColumnsMap.put(colEntry.getKey(), colEntry.getValue());
         }
         return sortedColumnsMap;
+    }
+
+    private Map<String, JoinMetrics> sortKeyCombinations(final Map<String, JoinMetrics> keyCombination) {
+
+        List<Map.Entry<String, JoinMetrics>> keyEntries = new ArrayList<>(keyCombination.entrySet());
+        Collections.sort(keyEntries, new Comparator<Map.Entry<String, JoinMetrics>>() {
+            @Override
+            public int compare(Map.Entry<String, JoinMetrics> k1, Map.Entry<String, JoinMetrics> k2) {
+                return k2.getValue().counts.values().stream().reduce(0, Integer::sum) -
+                        k1.getValue().counts.values().stream().reduce(0, Integer::sum);
+            }
+        });
+
+        Map<String, JoinMetrics> sortedKeysMap = new LinkedHashMap<>();
+        for (Map.Entry<String, JoinMetrics> colEntry : keyEntries) {
+            sortedKeysMap.put(colEntry.getKey(), colEntry.getValue());
+        }
+        return sortedKeysMap;
     }
 
     public void printLineage() {
@@ -121,35 +168,35 @@ public class SqlDetective {
                 joinsSummary(map);
                 joinsTableTitle();
                 map.getValue().joinKeys.entrySet().stream().forEach(e -> constructJoinsRow(e));
-                System.out.println(formatDiv("(============================================================================$============)\n"));
+                System.out.println(formatDiv("(===============================================================$=============$============)\n"));
             }
         }
     }
 
     private void tableSummary(final Map.Entry<String, ColumnsLineage> table) {
-        System.out.println(" \n\n Table: " + table.getKey() + " used " + table.getValue().tableCount + " times.");
+        System.out.println(" \n\n Table: " + table.getKey() + " used " + table.getValue().tableCount + " times");
     }
 
     private void columnsTableTitle() {
         String formatS = formatDiv("[-----------------x------------x------------x------------x------------x------------x------------]\n");
-        formatS += formatDiv("|       Column    |   Select   |  Aggregate |  Filter    |  Group By  |  Join key  |  Order By  |\n");
-        formatS += formatDiv("{-----------------q------------q------------q------------q------------q------------q------------}");
+        formatS += formatDiv("|     Column      |   Select   |  Aggregate |   Filter   |  Group By  |  Join key  |  Order By  |\n");
+        formatS += formatDiv("{-----------------@------------@------------@------------@------------@------------@------------}");
         System.out.println(formatS);
     }
 
     private static String formatDiv(String str) {
         return str.replace('[', '\u250f')
-                .replace('-', '\u2501')
-                .replace('x', '\u2533')
-                .replace('q', '\u2547')
-                .replace(']', '\u2513')
-                .replace('{', '\u2521')
-                .replace('}', '\u2529')
-                .replace('|', '\u2503')
-                .replace('=', '\u2500')
-                .replace('(', '\u2514')
-                .replace(')', '\u2518')
-                .replace('$', '\u2534');
+                  .replace('-', '\u2501')
+                  .replace('x', '\u2533')
+                  .replace('@', '\u2547')
+                  .replace(']', '\u2513')
+                  .replace('{', '\u2521')
+                  .replace('}', '\u2529')
+                  .replace('|', '\u2503')
+                  .replace('=', '\u2500')
+                  .replace('(', '\u2514')
+                  .replace(')', '\u2518')
+                  .replace('$', '\u2534');
     }
 
     private static String formatRow(String str) {
@@ -158,121 +205,57 @@ public class SqlDetective {
 
     private void constructColumnsRow(final Map.Entry<String, ColumnMetrics> metrics) {
 
-        String row = String.format("|%-17s| ", metrics.getKey());
+        String row = String.format("| %-15s | ", metrics.getKey());
 
         String[] cells = new String[6];
         Arrays.fill(cells, "           | ");
 
         for (int ind = 0; ind < 6; ind++) {
             if (metrics.getValue().counts.containsKey(NodeContext.valueOf(ind))) {
-                cells[ind] = metrics.getValue().counts.get(NodeContext.valueOf(ind)).toString();
+                    cells[ind] = metrics.getValue().counts.get(NodeContext.valueOf(ind)).toString();
                 row += String.format(" %5s     | ", cells[ind]);
             }
             else {
                 row += cells[ind];
             }
-//            cells[ind] = metrics.getValue().counts.getOrDefault(NodeContext.valueOf(ind), 0).toString();
-//            row += String.format(" %5s     | ", cells[ind]);
         }
         row += "\n";
         System.out.print(formatRow(row));
     }
 
     private void joinsSummary(final Map.Entry<String, JoinsLineage> join) {
-
-        System.out.println(" \n\n Join:  " + join.getKey() + " used " + join.getValue().joinCount + " times.");
+        System.out.println(" \n\n Join:  " + join.getKey() + " used " + join.getValue().joinCount + " times");
     }
 
     private void joinsTableTitle() {
-        String formatS = formatDiv("[----------------------------------------------------------------------------x------------]\n");
-        formatS += formatDiv("|                                 Key combination                            |    Count   |\n");
-        formatS += formatDiv("{----------------------------------------------------------------------------q------------}");
+        String formatS = formatDiv("[---------------------------------------------------------------x-------------x------------]\n");
+        formatS += formatDiv("|                           Key combination                     |  Equi Join  | Theta Join |\n");
+        formatS += formatDiv("{---------------------------------------------------------------@-------------@------------}");
         System.out.println(formatS);
     }
 
-    private void constructJoinsRow(final Map.Entry<String, Integer> join) {
-        String row = String.format("|     %-69s  |  %6d    |\n", join.getKey(), join.getValue());
+    private void constructJoinsRow(final Map.Entry<String, JoinMetrics> metrics) {
+        String row = String.format("| %-62s| ", metrics.getKey());
+
+        String[] cells = new String[6];
+        Arrays.fill(cells, "            |");
+
+        for (int ind = 0; ind < 2; ind++) {
+            if (metrics.getValue().counts.containsKey(JoinType.valueOf(ind))) {
+                cells[ind] = metrics.getValue().counts.get(JoinType.valueOf(ind)).toString();
+                row += String.format(" %5s      |", cells[ind]);
+            }
+            else {
+                row += cells[ind];
+            }
+        }
+        row += "\n";
         System.out.print(formatRow(row));
     }
 
-
     public static void main(String[] args) {
 
-        //        List<String> sqls = List.of(
-        //                "SELECT tt.x1 FROM tab1 tt"
-        //                , "SELECT tt.x2 AS y1 FROM tab1 tt"
-        //                ,  "SELECT x1 AS y1, x2 AS y2, x3 FROM tab1"                     //   ok
-        //                , "SELECT x + 1 AS xyz FROM table1"                             //   ok
-        //                , "SELECT x + 1 + y + 2 + z AS xyz FROM table1"                 //   ok
-        //                , "SELECT x + 1 + y + 2 FROM table1"                            //   ok
-        //                , "SELECT x + 1 * y + 2 / z - 3 FROM table1"                    //   ok
-        //                , "SELECT  order_date, status FROM orders WHERE id = 5"      //   ok
-        //                , "UPDATE orders SET id = 1234 WHERE id = 5   // AND xx = 7"         //   ok
-        //                , "UPDATE orders SET id = 1234 WHERE x = orders.t"              //   ok
-        //                , "SELECT a1, b2, c3 FROM users WHERE a1 = 10"                  //   ok
-        //                , "SELECT b2, c3, d4, e5 FROM users WHERE b2 = 5"               //   ok
-        //                , "Select a,b,c from tab2 where tab2.id in (x+5, y-7)"          //   ok
-        //                , "Select a,b,c from tab2 where tab2.id in (select id from tab5)"
-        //                , "Select a,b,c from tab2 where tab2.id in (select id from (select id from tab3))"
-        //                , "UPDATE users SET b2 = 7, c3 = 8, f6 = 11 WHERE b2 = 5"       //   ok
-        //                , "SELECT CONCAT('blah-', x ) AS y FROM tab4"                   //   ok
-        //                , "SELECT CONCAT(x,'-blah') AS y FROM tab4"                     //   ok
-        //                , "SELECT CONCAT(x5, y6, z8 ) AS xyz FROM tab4"                 //   ok
-        //                , "SELECT MAX(x1, y1) AS min_val FROM tab1"                     //   ok
-        //,                 "Select *, ea as ye from tab3"                                //   ok
-        //                , "SELECT tab1.x1, tab2.z2 FROM tab1, tab2"
-        //                , "SELECT tab1.x1, tab1.y1, tab2.z2, tab2.w2 FROM tab1 join tab2 on tab1.x1 = tab2.x2"
-        ////                , "SELECT COALESCE(tab1.x1, tab2.y2, tab3.z3) FROM tab1, tab2, tab3"                     //   ok
-        ////                , "SELECT ISNULL(tab1.x1, ISNULL(tab2.y2, 'aaa')) FROM tab1, tab2"                     //   ok
-        ////                , "Select * from tb_A A join tb_B B on A.ID = B.ID"
-        ////                 "Select x, y FROM EMP JOIN DEPT USING (depId)"
-        ////                 "Select * from tb_A A " +
-        ////                    "join tb_B B on A.ID = B.ID " +
-        ////                    "join tb_C C on B.ID2 = C.ID2 " +
-        ////                    "join tb_D D on A.ID = D.ID and C.ID3 = D.ID3 and B.ID4 = D.ID4 " +
-        ////                  "where A.Foo = 6"
-        ////                , "SELECT employee.Id, employee.FullName, employee.ManagerId, manager.FullName as ManagerName " +
-        ////                        "FROM Employees employee " +
-        ////                        "JOIN Employees manager ON employee.ManagerId = manager.Id"
-        ////                ,  "Select c1, c2 from t1 where not exists ( select c3 from t2 )"
-        //////
-        //////                " SELECT * FROM incidents " +
-        //////                "   JOIN ( SELECT i_date " +
-        //////                "          FROM tutorial " +
-        //////                "        ) sub " +
-        //////                "   ON incidents.inc_date = sub.i_date"
-        //////
-        //////              ,  " SELECT * FROM incidents " +
-        //////                        "   JOIN ( SELECT i_date " +
-        //////                        "          FROM tutorial " +
-        //////                        "          ORDER BY i_date LIMIT 5 " +
-        //////                        "        ) sub " +
-        //////                        "   ON incidents.inc_date = sub.i_date"
-        //////
-        ////              ,  "Select c1, c2 from t1 where exists ( select c3 from t2 where c4 > 5 ) and c11 > 5"
-        ////               ,     "Select c1, c2 from t1 where exists ( select c3 from t2 where t1.c4 > 5 ) and t2.c22 > 5"
-        ////               ,     "Select t1.c1, t2.c2 from t1, t2 where exists ( select t3.c3, t4.c4 from t3, t4 where t4.c4 = 10 ) and t1.c1 > 5"
-        ////                ,    "Select c1, t2.c2 from t1, t2 where exists ( select t3.c3, t4.c4 from t3, t4 where t4.c4 = 10 ) and c1 > 5"
-        //
-        ////                "Select distinct(x) from users"
-        //
-        ////               "SELECT COUNT(DISTINCT Country) FROM Customers"
-        ////               "SELECT COUNT(*) FROM Customers"
-        ////                "SELECT COUNT(Country) FROM Customers"
-        //             ,    "SELECT AVG(age) AS av, MIN(age) AS mi, MAX(age) AS ma FROM Employees"
-        //
-        //
-        ////                 "SELECT department_id, COUNT(*) FROM employees GROUP BY department_id"
-        ////                 "SELECT COUNT(*) FROM employees GROUP BY department_id"
-        ////                , "SELECT a, b, department_id FROM employees GROUP BY department_id"
-        //
-        //          Union   (SqlBasicCall)
-        //          With    (SqlWith)
-        //        );
-
         SqlDetective detective = new SqlDetective();
-
-
 
         try {
             String sql = detective.readInput();
@@ -290,6 +273,4 @@ public class SqlDetective {
             System.out.println(e.getCause());
         }
     }
-
 }
-

@@ -19,7 +19,7 @@ public class SelectTests {
 
     @BeforeEach
     public void setup() {
-        detective = new SqlDetective();
+         detective = new SqlDetective();
     }
 
     @Test
@@ -37,7 +37,7 @@ public class SelectTests {
     public void columnUnqualifiedAndAlias() throws SqlParseException {
 
         List<String> input = ImmutableList.of("SELECT tt.x2 AS y1 FROM tab1 tt",
-                "SELECT x1 AS y1, x2 AS y2, x3 FROM tab1");
+                                              "SELECT x1 AS y1, x2 AS y2, x3 FROM tab1");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
@@ -50,8 +50,8 @@ public class SelectTests {
     public void orderBy() throws SqlParseException {
 
         List<String> input = ImmutableList.of("SELECT i_date " +
-                "  FROM tab1 " +
-                "  ORDER BY i_date LIMIT 5 ");
+                                              "  FROM tab1 " +
+                                              "  ORDER BY i_date LIMIT 5 ");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
@@ -80,8 +80,31 @@ public class SelectTests {
         List<String> input = ImmutableList.of("Select a, b from (select a1, sum(b1) from tab1) as t1");
         LineageAnalysis resLineage = detective.parseInput(input);
 
+        Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
         Assertions.assertEquals(1, resLineage.columnsLineage.get("TAB1").tableColumns.get("A1").counts.get(NodeContext.SELECT));
         Assertions.assertEquals(1, resLineage.columnsLineage.get("TAB1").tableColumns.get("B1").counts.get(NodeContext.AGGREGATION));
+        detective.printLineage();
+    }
+
+    @Test
+    public void concatColumnWithLiteral() throws SqlParseException {
+
+        List<String> input = ImmutableList.of("SELECT CONCAT(x,'-blah') AS y FROM tab4");
+        LineageAnalysis resLineage = detective.parseInput(input);
+
+        Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
+        Assertions.assertEquals(1, resLineage.columnsLineage.get("TAB4").tableColumns.get("X").counts.get(NodeContext.SELECT));
+        detective.printLineage();
+    }
+
+    @Test
+    public void aggregations() throws SqlParseException {
+
+        List<String> input = ImmutableList.of("SELECT AVG(age) AS av, MIN(age) AS mi, MAX(age) AS ma FROM Employees");
+        LineageAnalysis resLineage = detective.parseInput(input);
+
+        Assertions.assertEquals(1, resLineage.columnsLineage.entrySet().size());
+        Assertions.assertEquals(3, resLineage.columnsLineage.get("EMPLOYEES").tableColumns.get("AGE").counts.get(NodeContext.AGGREGATION));
         detective.printLineage();
     }
 
@@ -89,12 +112,12 @@ public class SelectTests {
     public void caseClause() throws SqlParseException {
 
         List<String> input = ImmutableList.of("SELECT OrderID, OrderDate, " +
-                "CASE " +
-                "  WHEN Quantity > 30 THEN 'The quantity is greater than 30'" +
-                "  WHEN Quantity = 30 THEN 'The quantity is 30' " +
-                "ELSE 'The quantity is under 30' " +
-                "END AS QuantityText " +
-                "FROM OrderDetails");
+                                              "CASE " +
+                                              "  WHEN Quantity > 30 THEN 'The quantity is greater than 30'" +
+                                              "  WHEN Quantity = 30 THEN 'The quantity is 30' " +
+                                              "ELSE 'The quantity is under 30' " +
+                                              "END AS QuantityText " +
+                                              "FROM OrderDetails");
         LineageAnalysis resLineage = detective.parseInput(input);
 
         Assertions.assertEquals(1, resLineage.columnsLineage.get("ORDERDETAILS").tableColumns.get("ORDERID").counts.get(NodeContext.SELECT));

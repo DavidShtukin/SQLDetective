@@ -7,7 +7,6 @@ import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlJoin;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
-//import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.SqlWith;
@@ -21,7 +20,6 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -45,10 +43,10 @@ public class NodeVisitor extends SqlShuttle {
 
     private final SqlDetective detective;
 
-    private Deque<Scope>     scopes = new ArrayDeque<>();
-    private Namespace        currentNamespace;
-    private NodeContext      currentNodeContext;
-
+    private Deque<Scope>    scopes = new ArrayDeque<>();
+    private Namespace       currentNamespace;
+    private NodeContext     currentNodeContext;
+    private JoinType        currentJoinMetricsType;
 
     private Map<String, List<String>> currentJoinConditions = new HashMap<>();
     private JoinConditionType currentJoinConditionType = JoinConditionType.NONE;
@@ -92,6 +90,7 @@ public class NodeVisitor extends SqlShuttle {
             }
             else {
                 currentNamespace.tables.keySet().stream().forEach(table -> incrementColumnMetric(table, column));
+                constructAndAddUsingJoinToLineage(column);
             }
         }
         else {
@@ -100,6 +99,29 @@ public class NodeVisitor extends SqlShuttle {
             final String table = resolveTable(node.getComponent(0).toString());
             incrementColumnMetric(table, column);
         }
+    }
+    
+    private void constructAndAddUsingJoinToLineage(final String column) {
+        if (currentNamespace.tables.keySet().size() == 2) {
+            List<String> tables = new ArrayList<>();
+            tables.addAll(currentNamespace.tables.keySet());
+            List<String> keys = currentNamespace.tables.keySet()
+                                                       .stream()
+                                                       .map(t -> t + "." + column)
+                                                       .collect(Collectors.toList());
+            currentJoinMetricsType = JoinType.EQUALITY;
+            addJoinToLineage(tables, keys);
+        }
+    }
+
+    private void addJoinToLineage(final List<String> tables, final List<String> keys) {
+        Collections.sort(tables);
+        String join = "(" + tables.get(0) + " -> " + tables.get(1) + ")";
+
+        Collections.sort(keys);
+        String keyCombination = keys.toString();
+
+        incrementJoinMetrics(join, keyCombination);
     }
 
     private void incrementColumnMetric(final String table, final String column) {
@@ -124,14 +146,27 @@ public class NodeVisitor extends SqlShuttle {
         currentNamespace.tableColumns.clear();
     }
 
-    public void rollUpScope() {
+    public void rollUpSelectScope() {
         if (scopes.size() > 0) {
             addScopeToLineage();
             if (!currentNamespace.outerOrderBy) {
                 scopes.pop();
+                if (scopes.size() > 0) {
+                    currentNamespace = scopes.peek().scopeNamespace;
+                }
             }
-            if (scopes.size() > 0) {
-                currentNamespace = scopes.peek().scopeNamespace;
+            else {
+                Iterator scopesIterator = scopes.iterator();
+                boolean take = false;
+                while (scopesIterator.hasNext()) {
+                    Scope scope = (Scope) scopesIterator.next();
+                    if (take) {
+                        Namespace ns = scope.scopeNamespace;
+                        currentNamespace = scope.scopeNamespace;
+                        break;
+                    }
+                    take = true;
+                }
             }
         }
     }
@@ -143,7 +178,6 @@ public class NodeVisitor extends SqlShuttle {
             currentNamespace = null;
         }
     }
-
 
     private void addScopeToLineage() {
 
@@ -157,7 +191,7 @@ public class NodeVisitor extends SqlShuttle {
             for (Map.Entry<String, ColumnMetrics> column : table.getValue().entrySet()) {
 
                 final ColumnMetrics metrics = tableLineage.tableColumns.computeIfAbsent(column.getKey(),
-                        k -> new ColumnMetrics());
+                                                                                  k -> new ColumnMetrics());
                 for (NodeContext context : column.getValue().counts.keySet()) {
                     metrics.counts.put(context, metrics.counts.getOrDefault(context, 0) + column.getValue().counts.get(context));
                 }
@@ -165,8 +199,32 @@ public class NodeVisitor extends SqlShuttle {
         }
     }
 
-    private void addJoinToLineage(final List<SqlNode> joinCondition) {
+    private void handlePotentialJoin(SqlCall node) {
+        currentNodeContext = NodeContext.JOIN_KEY;
+        if ("=".equals(node.getOperator().getName())) {
+            currentJoinMetricsType = JoinType.EQUALITY;
+        }
+        else {
+            currentJoinMetricsType = JoinType.THETA;
+        }
+        constructAndAddJoinToLineage(node.getOperandList());
+    }
 
+    private List<String> extractTablesFromOperands(final SqlIdentifier op1, final SqlIdentifier op2) {
+        List<String> tables = new ArrayList<>();
+        if (!op1.isSimple() && !op2.isSimple()) {
+            String table1 = resolveTable(op1.getComponent(0).toString());
+            tables.add(table1);
+            String table2 = resolveTable(op2.getComponent(0).toString());
+            tables.add(table2);
+        }
+        else {
+            tables.addAll(currentNamespace.tables.keySet());
+        }
+        return tables;
+    }
+
+    private void constructAndAddJoinToLineage(final List<SqlNode> joinCondition) {
         SqlIdentifier op1 = (SqlIdentifier) joinCondition.get(0);
         SqlIdentifier op2 = (SqlIdentifier) joinCondition.get(1);
         List<String> tables = new ArrayList<>();
@@ -184,16 +242,16 @@ public class NodeVisitor extends SqlShuttle {
             keys.add(op1.toString());
             keys.add(op2.toString());
         }
-        Collections.sort(tables);
-        String join = "(" + tables.get(0) + "; " + tables.get(1) + ")";
+        addJoinToLineage(tables, keys);
+    }
 
+    private void incrementJoinMetrics(final String join, final String keyCombination) {
         JoinsLineage joinLineage = detective.globalLineage.joinsLineage.computeIfAbsent(join, k -> new JoinsLineage());
         joinLineage.joinCount++;
 
-        Collections.sort(keys);
-        String keyCombination = keys.toString();
-
-        joinLineage.joinKeys.put(keyCombination, joinLineage.joinKeys.getOrDefault(keyCombination, 0) + 1);
+        final JoinMetrics joinMetrics = joinLineage.joinKeys.computeIfAbsent(keyCombination, k -> new JoinMetrics());
+        
+        joinMetrics.counts.put(currentJoinMetricsType, joinMetrics.counts.getOrDefault(currentJoinMetricsType,0) + 1);
     }
 
     private String resolveTable(final String alias) {
@@ -227,8 +285,8 @@ public class NodeVisitor extends SqlShuttle {
                 addSelectScope();
                 tablesNode = ((SqlSelect) node).getFrom();
                 if (tablesNode instanceof SqlIdentifier || tablesNode instanceof SqlBasicCall &&
-                        ((SqlBasicCall) tablesNode).getOperator().getKind() == AS         &&
-                        ((SqlBasicCall) tablesNode).operand(0) instanceof SqlIdentifier) {
+                            ((SqlBasicCall) tablesNode).getOperator().getKind() == AS         &&
+                            ((SqlBasicCall) tablesNode).operand(0) instanceof SqlIdentifier) {
                     addTableToNamespace(tablesNode);
                 }
                 else {
@@ -256,7 +314,7 @@ public class NodeVisitor extends SqlShuttle {
                     currentNodeContext = NodeContext.GROUP_BY;
                     groupByNodes.accept(this);
                 }
-                rollUpScope();
+                rollUpSelectScope();
                 break;
             case UPDATE:
                 tablesNode = ((SqlUpdate) node).getTargetTable();
@@ -277,7 +335,7 @@ public class NodeVisitor extends SqlShuttle {
                         rollUpOrderByScope();
                     }
                     else if (operand instanceof SqlSelect |
-                            operand instanceof SqlWith) {
+                             operand instanceof SqlWith) {
                         currentNodeContext = NodeContext.ORDER_BY;
                         operand.accept(this);
                     }
@@ -338,11 +396,13 @@ public class NodeVisitor extends SqlShuttle {
                     currentNodeContext = NodeContext.AGGREGATION;
                 }
 
-                if (currentNodeContext == NodeContext.JOIN_KEY && node.operandCount() == 2) {
-                    if (node.operand(0) instanceof SqlIdentifier && node.operand(1) instanceof SqlIdentifier) {
-                        addJoinToLineage(node.getOperandList());
+                if (currentNodeContext == NodeContext.JOIN_KEY || currentNodeContext == NodeContext.FILTER) {
+                    if (node.operandCount() == 2 &&
+                            node.operand(0) instanceof SqlIdentifier && node.operand(1) instanceof SqlIdentifier) {
+                        handlePotentialJoin(node);
                     }
-                    else if (node.operand(0) instanceof SqlIdentifier || node.operand(1) instanceof SqlIdentifier) {
+                    else if (node.operandCount() == 2 &&
+                            (node.operand(0) instanceof SqlIdentifier || node.operand(1) instanceof SqlIdentifier)) {
                         currentNodeContext = NodeContext.FILTER;
                     }
                 }

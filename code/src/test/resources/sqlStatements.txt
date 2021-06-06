@@ -315,7 +315,7 @@ order by
 l.l_shipmode;
 
 select
-c_count, count(*) as custdist
+c.c_count, count(*) as custdist
 from (
 select
 c.c_custkey,
@@ -328,10 +328,10 @@ group by
 c.c_custkey
 ) as c_orders (c_custkey, c_count)
 group by
-c_count
+c.c_count
 order by
 custdist desc,
-c_count desc;
+c.c_count desc;
 
 select
 100.00 * sum(case
@@ -667,3 +667,5 @@ group by
 cntrycode
 order by
 cntrycode;
+
+

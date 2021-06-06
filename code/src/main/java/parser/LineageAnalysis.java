@@ -16,7 +16,5 @@ public class LineageAnalysis {
     public LineageAnalysis() {
         columnsLineage = new LinkedHashMap<>();
         joinsLineage = new LinkedHashMap<>();
-
     }
 }
-
